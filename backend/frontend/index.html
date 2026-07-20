@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>她伴</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  
+</style>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          primary: '#f0a5a0',
+          primaryDark: '#d48580',
+          bg: '#fefaf6',
+          card: '#ffffff',
+          text: '#3d2c2a',
+          textLight: '#8c7a75',
+          border: '#f0e8e0',
+        }
+      }
+    }
+  }
+</script>
+</head>
+<body class="bg-bg text-text min-h-screen transition-opacity duration-200" x-data="app()" x-init="init()" :class="initialized ? '' : 'opacity-0'">
+<div x-show="!currentView || currentView==='welcome' || currentView==='register' || currentView==='login' || currentView==='main'" style="display:none"></div>
+
+<!-- ============================================================ -->
+<!-- 全局状态 -->
+<!-- ============================================================ -->
+<script>
+function app() {
+  return {
+    // 核心状态
+    token: '',
+    userId: null,
+    currentTab: 'events',
+    loading: false,
+    initialized: false,
+    currentView: 'welcome',  // welcome | register | login | quiz | chat | confirm | card | door | main
+    step: 0,  // 问卷步骤 0-5
+    registerData: { nickname: '', password: '', birthYear: '1995', birthMonth: '06', birthDay: '15' },
+    loginData: { nickname: '', password: '' },
+    quizData: { personality: '', interests: [], topics: [], payStyle: '', spendStyle: '', sleepStyle: '', timeStyle: '', distance: '同城' },
+    
+    // AI 对话
+    aiMessages: [],
+    aiInput: '',
+    aiRound: 0,
+    showEnterBtn: false,
+    latentTraits: null,
+    
+    // 数据
+    events: [],
+    persons: [],
+    conversations: [],
+    applications: [],
+    showApplications: false,
+    currentAppEvent: null,
+    chatMessages: [],
+    chatPartner: null,
+    chatInput: '',
+    currentUser: null,
+    showEditProfile: false,
+    editNickname: '',
+    editBio: '',
+    myEvents: [],
+    showMyEvents: false,
+    
+    // 事件排序
+    eventSort: 'recommend',
+    
+    // 发布事件
+    showCreateEvent: false,
+    newEvent: { title: '', description: '', location: '', event_date: '', event_time: '14:00', event_duration: '2小时', max_participants: 2, category: '' },
+    
+    // 人格卡片
+    cardBio: '',
+    cardImage: 'preset_1',
+    selectedAvatar: 'preset_1',
+    
+    // 详情页
+    showEventDetail: null,
+    showPersonDetail: null,
+    showCreatorCard: false,
+    creatorCardData: null,
+    
+    // 常量
+    BACKEND: '',
+    presets: ['preset_1', 'preset_2', 'preset_3', 'preset_4', 'preset_5'],
+    categories: ['运动', '文艺', '生活', '社交', '学习'],
+    personalityOptions: ['INFJ', 'INFP', 'INTJ', 'INTP', 'ENFJ', 'ENFP', 'ENTJ', 'ENTP', 'ISFJ', 'ISTJ', 'ESFJ', 'ESTJ', 'ISFP', 'ISTP', 'ESFP', 'ESTP', '我不知道'],
+    interestCategories: {
+      '运动': ['羽毛球', '乒乓球', '游泳', '普拉提', '瑜伽', '跑步', '骑行', '徒步', '攀岩', '飞盘'],
+      '文艺': ['看展', '逛书店', '看电影', '话剧', '音乐节', '手工', '拼豆', '画画', '书法', '陶艺', '摄影'],
+      '生活': ['甜品探店', '咖啡探店', '逛公园', '散步游湖', '做饭', '烘焙', '园艺', '养宠物', '美食探店'],
+      '社交': ['读书会', '桌游', '剧本杀', 'KTV', '脱口秀', '逛集市', 'citywalk'],
+      '学习': ['学乐器', '学语言', '学舞蹈', '写作', '冥想']
+    },
+    topicCategories: {
+      '心理成长': ['自我探索', '原生家庭', '亲密关系', '情绪管理', '正念冥想'],
+      '文学艺术': ['小说', '诗歌', '散文', '电影', '音乐', '戏剧', '哲学'],
+      '生活方式': ['极简', '断舍离', '旅行', '美食', '穿搭', '家居', '理财'],
+      '社会观察': ['女性主义', '职场', '教育', '科技', '社会议题', '理财', '公益', '历史'],
+      '轻松闲聊': ['八卦', '星座', 'MBTI', '玄学', '宠物', '综艺', '追剧', '搞笑', '童年回忆']
+    },
+    payStyleOptions: ['AA制', '轮流请客'],
+    spendStyleOptions: ['极简主义', '品质享受'],
+    sleepStyleOptions: ['早起鸟', '夜猫子'],
+    timeStyleOptions: ['周末党', '工作日自由'],
+    distanceOptions: [],  // 改用滑块，不再使用选项
+    
+    // 初始化
+    async init() {
+      // 检查是否已登录
+      const saved = localStorage.getItem('taban_token');
+      if (saved) {
+        this.token = saved;
+        try {
+          const res = await this.api('/users/me');
+          if (res.ok) {
+            this.currentUser = res.data;
+            this.userId = res.data.id;
+            this.currentView = 'main';
+            this.initialized = true;
+            this.loadAll();
+            return;
+          }
+        } catch(e) { localStorage.removeItem('taban_token'); }
+      }
+      this.currentView = 'welcome';
+      this.initialized = true;
+    },
+    
+    // API 封装
+    async api(path, options = {}) {
+      const headers = { 'Content-Type': 'application/json', ...options.headers };
+      if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
+      const res = await fetch(this.BACKEND + '/api' + path, { ...options, headers });
+      return res.json();
+    },
+    
+    // 加载所有数据
+    async loadAll() {
+      await Promise.all([this.loadEvents(), this.loadPersons(), this.loadMessages()]);
+    },
+    async loadEvents() {
+      const res = await this.api('/events?sort=' + this.eventSort);
+      if (res.ok) this.events = res.data;
+    },
+    async loadPersons() {
+      const res = await this.api('/match/persons');
+      if (res.ok) this.persons = res.data;
+    },
+    async loadMessages() {
+      const res = await this.api('/messages');
+      if (res.ok) this.conversations = res.data;
+    },
+    async loadUser() {
+      const res = await this.api('/users/me');
+      if (res.ok) this.currentUser = res.data;
+    },
+    
+    // ── 注册流程 ──
+    async doLogin() {
+      this.loading = true;
+      try {
+        const { nickname, password } = this.registerData;
+        const loginRes = await this.api('/auth/login', { method: 'POST', body: JSON.stringify({ nickname, password }) });
+        if (!loginRes.ok) { alert('登录失败: ' + (loginRes.error || '')); return; }
+        this.token = loginRes.data.token;
+        this.userId = loginRes.data.user_id;
+        localStorage.setItem('taban_token', this.token);
+        this.currentUser = { id: this.userId, nickname };
+        await this.loadUser();
+        this.currentView = 'main';
+        this.currentTab = 'events';
+        this.loadAll();
+      } catch(e) { alert('连接后端失败'); } finally { this.loading = false; }
+    },
+    goRegister() {
+      this.currentView = 'register';
+    },
+    async doLogin() {
+      this.loading = true;
+      try {
+        const { nickname, password } = this.loginData;
+        if (!nickname || !password) { alert('请填写昵称和密码'); return; }
+        const res = await this.api('/auth/login', { method: 'POST', body: JSON.stringify({ nickname, password }) });
+        if (!res.ok) { alert('登录失败: ' + (res.error || '')); return; }
+        this.token = res.data.token;
+        this.userId = res.data.user_id;
+        localStorage.setItem('taban_token', this.token);
+        await this.loadUser();
+        this.currentView = 'main';
+        this.currentTab = 'events';
+        this.loadAll();
+      } catch(e) { alert('连接失败'); } finally { this.loading = false; }
+    },
+    async doRegister() {
+      this.loading = true;
+      try {
+        const { nickname, password, birthYear, birthMonth, birthDay } = this.registerData;
+        if (!nickname || !password) { alert('请填写昵称和密码'); return; }
+        if (nickname.length < 2) { alert('昵称至少2个字符'); return; }
+        if (password.length < 4) { alert('密码至少4个字符'); return; }
+        const birth_date = birthYear + '-' + birthMonth + '-' + birthDay;
+        const regRes = await this.api('/auth/register', { method: 'POST', body: JSON.stringify({ nickname, password, birth_date }) });
+        if (!regRes.ok) { alert('注册失败: ' + (regRes.error || '')); return; }
+        const loginRes = await this.api('/auth/login', { method: 'POST', body: JSON.stringify({ nickname, password }) });
+        if (!loginRes.ok) { alert('登录失败: ' + (loginRes.error || '')); return; }
+        this.token = loginRes.data.token;
+        this.userId = loginRes.data.user_id;
+        localStorage.setItem('taban_token', this.token);
+        this.currentView = 'quiz';
+        this.step = 0;
+      } catch(e) {
+        alert('连接后端失败，请确认后端已启动');
+        console.error(e);
+      } finally {
+        this.loading = false;
+      }
+    },
+    
+    nextStep() {
+      if (this.step < 5) { this.step++; return; }
+      if (this.step === 5) { this.startChat(); return; }
+    },
+    prevStep() { if (this.step > 0) this.step--; },
+    
+    toggleInterest(item) {
+      const i = this.quizData.interests.indexOf(item);
+      i > -1 ? this.quizData.interests.splice(i, 1) : this.quizData.interests.push(item);
+    },
+    toggleTopic(item) {
+      const i = this.quizData.topics.indexOf(item);
+      i > -1 ? this.quizData.topics.splice(i, 1) : this.quizData.topics.push(item);
+    },
+    
+    async startChat() {
+      this.currentView = 'chat';
+      this.aiMessages = [{ role: 'ai', content: '你好呀！我是小伴，你的第一个搭子 ✨ 让我先来了解一下你吧～你平时最喜欢做什么呢？' }];
+      this.aiRound = 0;
+    },
+    
+    async sendAiMessage() {
+      if (!this.aiInput.trim()) return;
+      const msg = this.aiInput.trim();
+      this.aiMessages.push({ role: 'user', content: msg });
+      this.aiInput = '';
+      this.aiRound++;
+      
+      // 调用 AI
+      const res = await this.api('/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message: msg })
+      });
+      
+      if (res.ok) {
+        this.aiMessages.push({ role: 'ai', content: res.data.reply });
+        if (res.data.traits) this.latentTraits = res.data.traits;
+      } else {
+        this.aiMessages.push({ role: 'ai', content: '收到你的消息了～能多说说吗？' });
+      }
+      
+      // 3轮后引导完成
+      if (this.aiRound >= 3) {
+        setTimeout(() => {
+          this.aiMessages.push({ role: 'ai', content: '我已经对你有了不少了解啦！接下来看看你的友缘画像吧～' });
+          this.showEnterBtn = true;
+        }, 1000);
+      }
+    },
+    
+    // 确认画像
+    async confirmProfile() {
+      // 保存标签（已注册登录，token 已有）
+      await this.api('/users/me/tags', {
+        method: 'POST',
+        body: JSON.stringify({
+          personality: this.quizData.personality,
+          interests: JSON.stringify(this.quizData.interests),
+          topics: JSON.stringify(this.quizData.topics),
+          consumption: (this.quizData.payStyle || '') + '-' + (this.quizData.spendStyle || ''),
+          life_rhythm: (this.quizData.sleepStyle || '') + '-' + (this.quizData.timeStyle || ''),
+          distance: this.quizData.distance
+        })
+      });
+      
+      this.currentView = 'card';
+    },
+    
+    // 保存卡片
+    async saveCard() {
+      await this.api('/users/me/card', {
+        method: 'POST',
+        body: JSON.stringify({ bio: this.cardBio, card_image: this.cardImage, avatar: this.selectedAvatar })
+      });
+      await this.loadUser();
+      this.currentView = 'door';
+      setTimeout(() => {
+        this.currentView = 'main';
+        this.currentTab = 'events';
+        this.loadAll();
+      }, 2000);
+    },
+    
+    // ── 底部导航 ──
+    switchTab(tab) {
+      this.currentTab = tab;
+      this.showEventDetail = null;
+      this.showPersonDetail = null;
+      if (tab === 'events') this.loadEvents();
+      if (tab === 'persons') this.loadPersons();
+      if (tab === 'messages') this.loadMessages();
+      if (tab === 'me') this.loadUser();
+    },
+    
+    // ── 事件 ──
+    eventDetail(e) { this.showEventDetail = e; },
+    backToEvents() { this.showEventDetail = null; this.loadEvents(); },
+    async joinEvent(eventId) {
+      const res = await this.api('/events/' + eventId + '/join', { method: 'POST' });
+      alert(res.ok ? '已申请加入！' : (res.error || '操作失败'));
+    },
+    async createEvent() {
+      const res = await this.api('/events', {
+        method: 'POST',
+        body: JSON.stringify(this.newEvent)
+      });
+      if (res.ok) {
+        this.showCreateEvent = false;
+        this.newEvent = { title: '', description: '', location: '', event_date: '', event_duration: '2小时', max_participants: 2, category: '' };
+        this.loadEvents();
+      } else { alert(res.error || '发布失败'); }
+    },
+    
+    // ── 人 ──
+    personDetail(p) {
+      if (p.birth_date) {
+        const bd = new Date(p.birth_date);
+        const now = new Date();
+        p.age = now.getFullYear() - bd.getFullYear();
+        if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) p.age--;
+        const zodiacs = ['摩羯','水瓶','双鱼','白羊','金牛','双子','巨蟹','狮子','处女','天秤','天蝎','射手'];
+        const m = bd.getMonth() + 1, d = bd.getDate();
+        const cuts = [20,19,21,20,21,22,23,23,23,24,23,22];
+        p.zodiac = zodiacs[m-1];
+        if (d >= cuts[m-1]) p.zodiac = zodiacs[m % 12];
+      }
+      this.showPersonDetail = p;
+    },
+    backToPersons() { this.showPersonDetail = null; this.loadPersons(); },
+    viewCreator(event) {
+      this.personDetail({
+        id: event.creator_id,
+        nickname: event.creator_nickname,
+        avatar: event.creator_avatar,
+        bio: event.creator_bio,
+        card_image: event.creator_card_image,
+        personality: event.creator_tags?.personality,
+        interests: event.creator_tags?.interests,
+        consumption: event.creator_tags?.consumption,
+        life_rhythm: event.creator_tags?.life_rhythm,
+        topics: event.creator_tags?.topics || "[]",
+        match_score: event.match_score || 0
+      });
+    },
+    async wantToMeet(person) {
+      const msg = prompt('发送第一条消息给 ' + person.nickname + '：');
+      if (!msg) return;
+      const res = await this.api('/messages', {
+        method: 'POST',
+        body: JSON.stringify({ to_user_id: person.id, content: msg, context_type: 'person' })
+      });
+      alert(res.ok ? '消息已发送！' : (res.error || '发送失败'));
+    },
+    
+    // ── 消息 ──
+    async openChat(conv) {
+      this.chatPartner = conv;
+      const res = await this.api('/messages/' + conv.partner_id);
+      if (res.ok) this.chatMessages = res.data;
+      this.currentTab = 'chatDetail';
+    },
+    backToMessages() { this.currentTab = 'messages'; this.chatPartner = null; this.chatMessages = []; this.loadMessages(); },
+    async sendMessage() {
+      if (!this.chatInput.trim() || !this.chatPartner) return;
+      const res = await this.api('/messages', {
+        method: 'POST',
+        body: JSON.stringify({ to_user_id: this.chatPartner.partner_id, content: this.chatInput.trim(), context_type: 'person' })
+      });
+      if (res.ok) {
+        this.chatMessages.push({ from_user_id: this.userId, content: this.chatInput.trim(), is_from_me: true, from_nickname: '我' });
+        this.chatInput = '';
+      }
+    },
+    
+    // ── 头像 ──
+    logout() {
+      localStorage.removeItem('taban_token');
+      this.token = ''; this.userId = null; this.currentUser = null;
+      this.currentView = 'welcome'; this.currentTab = 'events';
+    },
+    switchAccount() {
+      localStorage.removeItem('taban_token');
+      this.token = ''; this.userId = null; this.currentUser = null;
+      this.currentView = 'login'; this.currentTab = 'events';
+    },
+    async loadApplications() {
+      this.showApplications = true;
+      this.applications = [];
+      // 获取我发起的所有事件
+      const res = await this.api('/users/me/events');
+      if (!res.ok) return;
+      const myEvents = res.data.filter(e => e.role === '发起的');
+      for (const e of myEvents) {
+        const apps = await this.api('/events/' + e.id + '/applicants');
+        if (apps.ok) {
+          for (const a of apps.data) {
+            this.applications.push({ ...a, event_title: e.title, event_id: e.id });
+          }
+        }
+      }
+    },
+    async approveApp(app) {
+      const res = await this.api('/events/' + app.event_id + '/applicants/' + app.user_id + '/accept', { method: 'POST' });
+      if (res.ok) { app.status = 'accepted'; }
+    },
+    async rejectApp(app) {
+      const res = await this.api('/events/' + app.event_id + '/applicants/' + app.user_id + '/reject', { method: 'POST' });
+      if (res.ok) { app.status = 'rejected'; }
+    },
+    avatarUrl(preset) { return 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + preset; }
+  }
+}
+</script>
+
+<!-- ============================================================ -->
+<!-- 欢迎页 -->
+<!-- ============================================================ -->
+<div class="min-h-screen flex flex-col items-center justify-center p-8" x-show="initialized && currentView === 'welcome'" x-transition>
+  <div class="text-6xl mb-6">🌸</div>
+  <h1 class="text-3xl font-bold text-primary mb-2">她伴</h1>
+  <p class="text-textLight text-center mb-8">去性缘化的女性搭子匹配<br>找到精神同频的她</p>
+  <div class="flex flex-col gap-3 w-full max-w-xs">
+  <button @click="goRegister()" class="bg-primary text-white w-full py-3 rounded-full text-lg font-medium shadow-lg hover:bg-primaryDark transition">新用户注册</button>
+  <button @click="currentView='login'" class="border border-primary text-primary w-full py-3 rounded-full text-lg font-medium hover:bg-primary/5 transition">已有账号登录</button>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 登录页 -->
+<div class="min-h-screen p-8" x-show="currentView === 'login'" x-transition>
+  <h2 class="text-xl font-semibold mb-6 text-center">欢迎回来</h2>
+  <div class="space-y-4">
+    <div><label class="text-sm text-textLight">昵称</label>
+      <input x-model="loginData.nickname" placeholder="输入你的昵称" class="w-full px-4 py-3 rounded-xl border border-border text-sm outline-none focus:border-primary"></div>
+    <div><label class="text-sm text-textLight">密码</label>
+      <input x-model="loginData.password" type="password" placeholder="输入密码" class="w-full px-4 py-3 rounded-xl border border-border text-sm outline-none focus:border-primary"></div>
+  </div>
+  <button @click="doLogin()" :disabled="loading" class="w-full bg-primary text-white py-3 rounded-full mt-8 font-medium disabled:opacity-50" x-text="loading ? '登录中...' : '登录'"></button>
+  <p class="text-center text-sm text-textLight mt-4">还没有账号？<button @click="currentView='register'" class="text-primary underline">去注册</button></p>
+</div>
+
+
+<!-- 注册页 -->
+<div class="min-h-screen p-8" x-show="currentView === 'register'" x-transition>
+  <h2 class="text-xl font-semibold mb-6 text-center">创建你的账号</h2>
+  <div class="space-y-4">
+    <div><label class="text-sm text-textLight">昵称</label>
+      <input x-model="registerData.nickname" placeholder="你想叫什么？" class="w-full px-4 py-3 rounded-xl border border-border text-sm outline-none focus:border-primary"></div>
+    <div><label class="text-sm text-textLight">密码</label>
+      <input x-model="registerData.password" type="password" placeholder="设置密码（至少4位）" class="w-full px-4 py-3 rounded-xl border border-border text-sm outline-none focus:border-primary"></div>
+    <div><label class="text-sm text-textLight">出生年月日</label>
+      <div class="grid grid-cols-3 gap-2">
+        <select x-model="registerData.birthYear" class="px-2 py-3 rounded-xl border border-border text-sm bg-white">
+          <template x-for="y in Array.from({length:40},(_,i)=>1985+i)"><option :value="y" x-text="y+'年'"></option></template></select>
+        <select x-model="registerData.birthMonth" class="px-2 py-3 rounded-xl border border-border text-sm bg-white">
+          <option value="01">1月</option><option value="02">2月</option><option value="03">3月</option><option value="04">4月</option><option value="05">5月</option><option value="06">6月</option><option value="07">7月</option><option value="08">8月</option><option value="09">9月</option><option value="10">10月</option><option value="11">11月</option><option value="12">12月</option></select>
+        <select x-model="registerData.birthDay" class="px-2 py-3 rounded-xl border border-border text-sm bg-white">
+          <template x-for="d in Array.from({length:31},(_,i)=>String(i+1).padStart(2,'0'))"><option :value="d" x-text="d+'日'"></option></template></select>
+      </div></div>
+  </div>
+  <button @click="doRegister()" :disabled="loading" class="w-full bg-primary text-white py-3 rounded-full mt-8 font-medium disabled:opacity-50" x-text="loading ? '注册中...' : '注册并开始'"></button>
+</div>
+
+
+<!-- 登录页 -->
+<div class="min-h-screen p-8" x-show="currentView === 'login'" x-transition>
+  <h2 class="text-xl font-semibold mb-6 text-center">欢迎回来</h2>
+  <div class="space-y-4">
+    <div><label class="text-sm text-textLight">昵称</label>
+      <input x-model="registerData.nickname" placeholder="输入昵称" class="w-full px-4 py-3 rounded-xl border border-border text-sm outline-none focus:border-primary"></div>
+    <div><label class="text-sm text-textLight">密码</label>
+      <input x-model="registerData.password" type="password" placeholder="输入密码" class="w-full px-4 py-3 rounded-xl border border-border text-sm outline-none focus:border-primary"></div>
+  </div>
+  <button @click="doLogin()" :disabled="loading" class="w-full bg-primary text-white py-3 rounded-full mt-8 font-medium disabled:opacity-50" x-text="loading ? '登录中...' : '登录'"></button>
+  <p class="text-center text-xs text-textLight mt-4">没有账号？<span @click="currentView='register'" class="text-primary underline cursor-pointer">去注册</span></p>
+</div>
+
+
+<!-- 问卷页 -->
+<!-- ============================================================ -->
+<div class="min-h-screen" x-show="currentView === 'quiz'" x-transition>
+  <div class="p-6">
+    <!-- 进度条 -->
+    <div class="flex gap-2 mb-8">
+      <template x-for="i in 6"><div class="h-1 flex-1 rounded-full" :class="step >= (i-1) ? 'bg-primary' : 'bg-border'"></div></template>
+    </div>
+    
+    <!-- 步骤 0: 人格气质 -->
+    <div x-show="step === 0" class="fade-in">
+      <h2 class="text-xl font-semibold mb-4">你觉得自己更像哪种气质？</h2>
+      <div class="grid grid-cols-2 gap-2">
+        <template x-for="p in personalityOptions">
+          <div>
+            <input type="radio" :id="p" x-model="quizData.personality" :value="p" class="hidden peer">
+            <label :for="p" class="block text-center py-3 px-2 rounded-xl border border-border text-sm cursor-pointer peer-checked:bg-primary peer-checked:text-white peer-checked:border-primary hover:bg-bg transition" x-text="p"></label>
+          </div>
+        </template>
+      </div>
+    </div>
+    
+    <!-- 步骤 1: 兴趣活动 -->
+    <div x-show="step === 1" class="fade-in">
+      <h2 class="text-xl font-semibold mb-4">你平时喜欢做什么？（多选）</h2>
+      <template x-for="(items, cat) in interestCategories">
+        <div class="mb-3">
+          <p class="text-sm font-medium text-textLight mb-1" x-text="cat"></p>
+          <div class="flex flex-wrap gap-1">
+            <template x-for="item in items">
+              <button @click="toggleInterest(item)" class="px-3 py-1 rounded-full text-xs border cursor-pointer transition"
+                :class="quizData.interests.includes(item) ? 'bg-primary text-white border-primary' : 'border-border hover:bg-bg'" x-text="item"></button>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+    
+    <!-- 步骤 2: 聊天话题 -->
+    <div x-show="step === 2" class="fade-in">
+      <h2 class="text-xl font-semibold mb-4">你对什么话题感兴趣？（多选）</h2>
+      <template x-for="(items, cat) in topicCategories">
+        <div class="mb-3">
+          <p class="text-sm font-medium text-textLight mb-1" x-text="cat"></p>
+          <div class="flex flex-wrap gap-1">
+            <template x-for="item in items">
+              <button @click="toggleTopic(item)" class="px-3 py-1 rounded-full text-xs border cursor-pointer transition"
+                :class="quizData.topics.includes(item) ? 'bg-primary text-white border-primary' : 'border-border hover:bg-bg'" x-text="item"></button>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+    
+    <!-- 步骤 3: 消费观 -->
+    <div x-show="step === 3" class="fade-in">
+      <h2 class="text-xl font-semibold mb-4">你的消费习惯是？</h2>
+      <div class="mb-4"><p class="text-sm text-textLight mb-2">支付方式</p>
+        <div class="grid grid-cols-2 gap-2">
+          <template x-for="o in payStyleOptions"><div><input type="radio" :id="'pay-'+o" x-model="quizData.payStyle" :value="o" class="hidden peer"><label :for="'pay-'+o" class="block text-center py-3 rounded-xl border border-border cursor-pointer peer-checked:bg-primary peer-checked:text-white peer-checked:border-primary" x-text="o"></label></div></template>
+        </div></div>
+      <div><p class="text-sm text-textLight mb-2">消费风格</p>
+        <div class="grid grid-cols-2 gap-2">
+          <template x-for="o in spendStyleOptions"><div><input type="radio" :id="'spend-'+o" x-model="quizData.spendStyle" :value="o" class="hidden peer"><label :for="'spend-'+o" class="block text-center py-3 rounded-xl border border-border cursor-pointer peer-checked:bg-primary peer-checked:text-white peer-checked:border-primary" x-text="o"></label></div></template>
+        </div></div>
+    </div>
+    
+    <!-- 步骤 4: 生活节奏 -->
+    <div x-show="step === 4" class="fade-in">
+      <h2 class="text-xl font-semibold mb-4">你的生活节奏是？</h2>
+      <div class="mb-4"><p class="text-sm text-textLight mb-2">作息习惯</p>
+        <div class="grid grid-cols-2 gap-2">
+          <template x-for="o in sleepStyleOptions"><div><input type="radio" :id="'sleep-'+o" x-model="quizData.sleepStyle" :value="o" class="hidden peer"><label :for="'sleep-'+o" class="block text-center py-3 rounded-xl border border-border cursor-pointer peer-checked:bg-primary peer-checked:text-white peer-checked:border-primary" x-text="o"></label></div></template>
+        </div></div>
+      <div><p class="text-sm text-textLight mb-2">时间偏好</p>
+        <div class="grid grid-cols-2 gap-2">
+          <template x-for="o in timeStyleOptions"><div><input type="radio" :id="'time-'+o" x-model="quizData.timeStyle" :value="o" class="hidden peer"><label :for="'time-'+o" class="block text-center py-3 rounded-xl border border-border cursor-pointer peer-checked:bg-primary peer-checked:text-white peer-checked:border-primary" x-text="o"></label></div></template>
+        </div></div>
+    </div>
+    
+    <!-- 步骤 5: 距离范围 -->
+    <div x-show="step === 5" class="fade-in">
+      <h2 class="text-xl font-semibold mb-4">你希望搭子离你多远？</h2>
+      <div class="space-y-2">
+        <template x-for="d in ['同城','同区/县','5km以内','5-10km','不限']">
+          <div>
+            <input type="radio" :id="d" x-model="quizData.distance" :value="d" class="hidden peer">
+            <label :for="d" class="block text-center py-3 rounded-xl border border-border cursor-pointer peer-checked:bg-primary peer-checked:text-white peer-checked:border-primary" x-text="d"></label>
+          </div>
+        </template>
+      </div>
+    </div>
+    
+    <!-- 导航按钮 -->
+    <div class="flex justify-between mt-8">
+      <button @click="prevStep()" x-show="step > 0" class="text-textLight px-4 py-2">← 上一步</button>
+      <div x-show="step === 0" class="flex-1"></div>
+      <button @click="nextStep()" class="bg-primary text-white px-8 py-2 rounded-full ml-auto" x-text="step === 5 ? '完成问卷' : '下一步'"></button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- AI 对话页 -->
+<!-- ============================================================ -->
+<div class="min-h-screen flex flex-col" x-show="currentView === 'chat'" x-transition>
+  <div class="bg-white p-4 text-center border-b border-border">
+    <span class="text-lg">🤖 小伴</span>
+    <p class="text-xs text-textLight">让我作为你的第一个搭子，先聊聊吧~</p>
+  </div>
+  <div class="flex-1 overflow-y-auto p-4 space-y-3" id="chatContainer">
+    <template x-for="m in aiMessages">
+      <div class="flex" :class="m.role === 'user' ? 'justify-end' : 'justify-start'">
+        <div class="max-w-[80%] px-4 py-2 text-sm" :class="m.role === 'user' ? 'chat-bubble-me' : 'chat-bubble-ai'" x-text="m.content"></div>
+      </div>
+    </template>
+  </div>
+  <div x-show="showEnterBtn && currentView === 'chat'" class="p-4 bg-white border-t border-border"><button @click="currentView='confirm'" class="w-full bg-primary text-white py-3 rounded-full font-medium">进入首页</button></div>
+  <div class="p-4 bg-white border-t border-border flex gap-2">
+    <textarea x-model="aiInput" @keydown.enter.prevent="sendAiMessage()" placeholder="说点什么...（Enter发送，Shift+Enter换行）" rows="1" class="flex-1 px-4 py-2 rounded-xl border border-border text-sm outline-none focus:border-primary resize-none"></textarea>
+    <button @click="sendAiMessage()" class="bg-primary text-white w-10 h-10 rounded-full flex items-center justify-center">→</button>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 画像确认页 -->
+<!-- ============================================================ -->
+<div class="min-h-screen p-6" x-show="currentView === 'confirm'" x-transition>
+  <h2 class="text-xl font-semibold mb-6 text-center">这是你的友缘画像 ✨</h2>
+  <div class="bg-white rounded-2xl p-6 shadow-sm space-y-4">
+    <div><span class="text-textLight text-sm">人格气质</span><p class="font-medium" x-text="quizData.personality || '未选择'"></p></div>
+    <div><span class="text-textLight text-sm">兴趣活动</span><p class="font-medium" x-text="quizData.interests.join('、') || '未选择'"></p></div>
+    <div><span class="text-textLight text-sm">聊天话题</span><p class="font-medium" x-text="quizData.topics.join('、') || '未选择'"></p></div>
+    <div><span class="text-textLight text-sm">消费观</span><p class="font-medium" x-text="(quizData.payStyle||'?') + '-' + (quizData.spendStyle||'?') + ''"></p></div>
+    <div><span class="text-textLight text-sm">生活节奏</span><p class="font-medium" x-text="(quizData.sleepStyle||'?') + '-' + (quizData.timeStyle||'?') + ''"></p></div>
+    <div><span class="text-textLight text-sm">距离范围</span><p class="font-medium" x-text="quizData.distance + 'km'"></p></div>
+  </div>
+  <button @click="confirmProfile()" class="w-full bg-primary text-white py-3 rounded-full mt-6 font-medium">确认，继续</button>
+</div>
+
+<!-- ============================================================ -->
+<!-- 人格卡片创建页 -->
+<!-- ============================================================ -->
+<div class="min-h-screen p-6" x-show="currentView === 'card'" x-transition>
+  <h2 class="text-xl font-semibold mb-4">创建你的人格卡片</h2>
+  <p class="text-textLight text-sm mb-4">这是你在她伴的"第一印象"，写下你想说的话吧</p>
+  
+  <textarea x-model="cardBio" rows="4" placeholder="写一段自我介绍..." class="w-full px-4 py-3 rounded-xl border border-border text-sm outline-none focus:border-primary resize-none"></textarea>
+  
+  <p class="text-sm text-textLight mt-4 mb-2">选择你的卡片风格</p>
+  <div class="flex gap-3 flex-wrap">
+    <template x-for="(p, i) in presets">
+      <div @click="cardImage = p; selectedAvatar = p" class="w-16 h-16 rounded-xl border-2 cursor-pointer flex items-center justify-center text-2xl bg-bg transition"
+        :class="cardImage === p ? 'border-primary' : 'border-border'">
+        <span x-text="['🌸','🌿','🌟','🎨','🌙'][i]"></span>
+      </div>
+    </template>
+  </div>
+  
+  <button @click="saveCard()" class="w-full bg-primary text-white py-3 rounded-full mt-8 font-medium" :disabled="!cardBio.trim()">保存，进入她伴</button>
+</div>
+
+<!-- ============================================================ -->
+<!-- 大门动画 -->
+<!-- ============================================================ -->
+<div class="min-h-screen flex items-center justify-center bg-primary" x-show="currentView === 'door'">
+  <div class="text-center text-white door-open">
+    <div class="text-6xl mb-4">🌸</div>
+    <h1 class="text-3xl font-bold">欢迎进入她伴</h1>
+    <p class="mt-2 opacity-80">你的友缘之旅，从这里开始</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 主页面 -->
+<!-- ============================================================ -->
+<div class="min-h-screen" x-show="currentView === 'main'" x-transition>
+
+  <!-- 事 - 首页 -->
+  <div x-show="currentTab === 'events' && !showEventDetail" class="pb-20">
+    <div class="p-4 flex justify-between items-center">
+      <h2 class="text-lg font-semibold">附近搭子</h2>
+      <div class="flex gap-1 text-xs">
+        <button @click="eventSort='recommend'; loadEvents()" class="px-3 py-1 rounded-full" :class="eventSort==='recommend'?'bg-primary text-white':'bg-border text-textLight'">推荐</button>
+        <button @click="eventSort='distance'; loadEvents()" class="px-3 py-1 rounded-full" :class="eventSort==='distance'?'bg-primary text-white':'bg-border text-textLight'">距离</button>
+        <button @click="eventSort='match'; loadEvents()" class="px-3 py-1 rounded-full" :class="eventSort==='match'?'bg-primary text-white':'bg-border text-textLight'">匹配</button>
+      </div>
+    </div>
+    <div class="px-4 space-y-3">
+      <template x-for="e in events">
+        <div @click="eventDetail(e)" class="bg-white rounded-2xl p-4 shadow-sm cursor-pointer hover:shadow-md transition">
+          <div class="flex justify-between items-start">
+            <div class="flex-1">
+              <h3 class="font-medium" x-text="e.title"></h3>
+              <p class="text-xs text-textLight mt-1" x-text="e.location + ' · ' + (e.event_date||'').replace('T',' ') + ' · ' + (e.event_duration||'')"></p>
+            </div>
+            <span class="text-xs bg-bg px-2 py-1 rounded-full text-textLight" x-text="e.category"></span>
+          </div>
+          <div class="flex items-center gap-2 mt-3">
+            <span class="text-xs text-textLight" x-text="e.creator_nickname"></span>
+            <span class="text-xs text-textLight" x-text="'/' + e.max_participants + '人'"></span>
+          </div>
+        </div>
+      </template>
+      <div x-show="events.length === 0" class="text-center text-textLight py-12">暂无事件，发布第一个吧～</div>
+    </div>
+  </div>
+  
+  <!-- 事件详情 -->
+  <div x-show="currentTab === 'events' && showEventDetail" class="pb-20">
+    <div class="p-4">
+      <button @click="backToEvents()" class="text-textLight mb-4">← 返回</button>
+      <div class="bg-white rounded-2xl p-6 shadow-sm">
+        <span class="text-xs bg-bg px-2 py-1 rounded-full text-textLight" x-text="showEventDetail.category"></span>
+        <h2 class="text-xl font-semibold mt-2" x-text="showEventDetail.title"></h2>
+        <p class="text-textLight mt-2" x-text="showEventDetail.description"></p>
+        <div class="mt-4 space-y-2 text-sm">
+          <p>📍 <span x-text="showEventDetail.location"></span></p>
+          <p>🕐 <span x-text="(showEventDetail.event_date||'').replace(/-/g,'/') + (showEventDetail.event_time ? ' ' + showEventDetail.event_time : '')"></span> · <span x-text="showEventDetail.event_duration"></span></p>
+          <p>👤 发起人：<span x-text="showEventDetail.creator_nickname"></span> <button @click="viewCreator(showEventDetail)" class="text-primary text-xs underline">查看卡片</button></p>
+        </div>
+        <button @click="joinEvent(showEventDetail.id)" class="w-full bg-primary text-white py-3 rounded-full mt-6 font-medium">申请加入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 人 -->
+  <div x-show="currentTab === 'persons' && !showPersonDetail" class="pb-20">
+    <div class="p-4"><h2 class="text-lg font-semibold">可能合拍的搭子</h2></div>
+    <div class="px-4 space-y-4">
+      <template x-for="p in persons">
+        <div @click="personDetail(p)" class="bg-white rounded-2xl p-4 shadow-sm cursor-pointer hover:shadow-md transition">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 rounded-full bg-bg flex items-center justify-center text-xl" x-text="['🌸','🌿','🌟','🎨','🌙'][p.id % 5]"></div>
+            <div class="flex-1">
+              <h3 class="font-medium" x-text="p.nickname"></h3>
+              <p class="text-xs text-textLight" x-text="p.bio ? p.bio.slice(0,30)+'...' : '暂无简介'"></p>
+            </div>
+            <span class="text-xs text-primary font-medium" x-text="Math.round(p.match_score * 100) + '%'"></span>
+          </div>
+        </div>
+      </template>
+      <div x-show="persons.length === 0" class="text-center text-textLight py-12">暂无推荐</div>
+    </div>
+  </div>
+  
+  <!-- 人-详情 -->
+  <div x-show="currentTab === 'persons' && showPersonDetail" class="pb-20">
+    <div class="p-4">
+      <button @click="backToPersons()" class="text-textLight mb-4">← 返回</button>
+      <div class="bg-white rounded-2xl p-6 shadow-sm text-center">
+        <div class="text-5xl mb-4" x-text="['🌸','🌿','🌟','🎨','🌙'][showPersonDetail.id % 5]"></div>
+        <h2 class="text-xl font-semibold" x-text="showPersonDetail.nickname"></h2>
+        <p class="text-xs text-textLight" x-text="(showPersonDetail.personality||'') + ' · ' + (showPersonDetail.age||'') + '岁 · ' + (showPersonDetail.zodiac||'')"></p>
+        <p class="text-textLight mt-2" x-text="showPersonDetail.bio || '这个人很神秘，什么都没写...'"></p>
+        <div class="flex flex-wrap gap-1 mt-4 justify-center">
+          <template x-for="tag in JSON.parse(showPersonDetail.interests || '[]').slice(0,8)">
+            <span class="text-xs bg-bg px-2 py-1 rounded-full" x-text="tag"></span>
+          </template>
+        </div>
+        <button @click="wantToMeet(showPersonDetail)" class="w-full bg-primary text-white py-3 rounded-full mt-6 font-medium">想认识</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 消息列表 -->
+  <div x-show="currentTab === 'messages'" class="pb-20">
+    <div class="p-4 flex justify-between items-center">
+      <h2 class="text-lg font-semibold">消息</h2>
+      <button @click="loadApplications()" class="text-xs text-primary">事件申请</button>
+    </div>
+    <div class="px-4 space-y-2">
+      <template x-for="c in conversations">
+        <div @click="openChat(c)" class="bg-white rounded-2xl p-4 shadow-sm cursor-pointer flex items-center gap-3">
+          <div class="w-10 h-10 rounded-full bg-bg flex items-center justify-center text-lg" x-text="['🌸','🌿'][c.partner_id % 2]"></div>
+          <div class="flex-1 min-w-0">
+            <div class="flex justify-between"><span class="font-medium text-sm" x-text="c.partner_nickname"></span><span class="text-xs text-textLight" x-text="c.created_at?.slice(0,10)"></span></div>
+            <p class="text-xs text-textLight truncate" x-text="c.last_message"></p>
+          </div>
+        </div>
+      </template>
+      <div x-show="conversations.length === 0" class="text-center text-textLight py-12">暂无消息</div>
+    </div>
+  </div>
+  
+  <!-- 聊天详情 -->
+  <!-- 事件申请列表 -->
+  <div x-show="showApplications" class="pb-20">
+    <div class="p-4 flex items-center gap-3">
+      <button @click="showApplications=false" class="text-textLight">← 返回</button>
+      <h2 class="text-lg font-semibold">事件申请</h2>
+    </div>
+    <div class="px-4 space-y-3">
+      <template x-for="app in applications">
+        <div class="bg-white rounded-2xl p-4 shadow-sm">
+          <div class="flex justify-between items-center">
+            <div>
+              <p class="font-medium text-sm" x-text="app.event_title"></p>
+              <p class="text-xs text-textLight" x-text="app.nickname + ' 申请加入'"></p>
+            </div>
+            <div class="flex gap-2" x-show="app.status==='pending'">
+              <button @click="approveApp(app)" class="px-3 py-1 rounded-full bg-primary text-white text-xs">通过</button>
+              <button @click="rejectApp(app)" class="px-3 py-1 rounded-full border border-border text-textLight text-xs">拒绝</button>
+            </div>
+            <span x-show="app.status!=='pending'" class="text-xs" :class="app.status==='accepted'?'text-green-500':'text-red-400'" x-text="app.status==='accepted'?'已通过':'已拒绝'"></span>
+          </div>
+        </div>
+      </template>
+      <div x-show="applications.length===0" class="text-center text-textLight py-12 text-sm">暂无待审批的申请</div>
+    </div>
+  </div>
+
+  <div x-show="currentTab === 'chatDetail'" class="pb-20 flex flex-col min-h-screen">
+    <div class="p-4 bg-white border-b border-border flex items-center gap-3">
+      <button @click="backToMessages()" class="text-textLight">←</button>
+      <span class="font-medium" x-text="chatPartner?.partner_nickname"></span>
+    </div>
+    <div class="flex-1 overflow-y-auto p-4 space-y-3">
+      <template x-for="m in chatMessages">
+        <div class="flex" :class="m.is_from_me ? 'justify-end' : 'justify-start'">
+          <div class="max-w-[75%] px-4 py-2 text-sm" :class="m.is_from_me ? 'chat-bubble-me' : 'chat-bubble-ai'" x-text="m.content"></div>
+        </div>
+      </template>
+    </div>
+    <div x-show="showEnterBtn && currentView === 'chat'" class="p-4 bg-white border-t border-border"><button @click="currentView='confirm'" class="w-full bg-primary text-white py-3 rounded-full font-medium">进入首页</button></div>
+  <div class="p-4 bg-white border-t border-border flex gap-2">
+      <input x-model="chatInput" @keydown.enter="sendMessage()" placeholder="输入消息..." class="flex-1 px-4 py-2 rounded-full border border-border text-sm outline-none focus:border-primary">
+      <button @click="sendMessage()" class="bg-primary text-white px-4 py-2 rounded-full text-sm font-medium">发送</button>
+    </div>
+  </div>
+  
+  <!-- 我 -->
+  <div x-show="currentTab === 'me'" class="pb-20">
+    <div class="p-6 text-center">
+      <div class="text-5xl mb-3" x-text="['🌸','🌿','🌟','🎨','🌙'][(currentUser?.id || 0) % 5]"></div>
+      <h2 class="text-xl font-semibold" x-text="currentUser?.nickname || '...'"></h2>
+      <p class="text-textLight text-sm mt-2" x-text="currentUser?.bio || '暂无简介'"></p>
+      <button @click="showEditProfile=true; editNickname=currentUser?.nickname||''; editBio=currentUser?.bio||''" class="text-xs text-primary mt-2 underline">编辑资料</button>
+    </div>
+    <div class="px-6 space-y-4">
+      <div class="bg-white rounded-2xl p-4 shadow-sm">
+        <h3 class="text-sm font-medium text-textLight mb-2">我的标签</h3>
+        <div class="flex flex-wrap gap-1">
+          <span class="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full" x-text="currentUser?.personality"></span>
+          <template x-for="tag in JSON.parse(currentUser?.interests || '[]').slice(0,6)">
+            <span class="text-xs bg-bg px-2 py-1 rounded-full" x-text="tag"></span>
+          </template>
+        </div>
+      </div>
+      <div class="bg-white rounded-2xl p-4 shadow-sm">
+        <h3 class="text-sm font-medium text-textLight mb-2">设置</h3>
+        <p class="text-sm">距离范围：<span x-text="currentUser?.distance || '同城'"></span></p>
+      </div>
+      <div class="space-y-2">
+        <button @click="logout()" class="w-full bg-white rounded-2xl p-4 shadow-sm text-sm text-textLight text-center">退出登录</button>
+        <button @click="switchAccount()" class="w-full bg-white rounded-2xl p-4 shadow-sm text-sm text-textLight text-center">切换账号</button>
+      </div>
+      <button @click="myEvents=[]; api('/users/me/events').then(r=>{if(r.ok)myEvents=r.data}); showMyEvents=!showMyEvents" class="w-full bg-white rounded-2xl p-4 shadow-sm text-sm font-medium text-primary">
+        <span x-text="showMyEvents ? '收起我的事件' : '查看我的事件'"></span>
+      </button>
+      <div x-show="showMyEvents" class="space-y-2">
+        <template x-for="e in myEvents">
+          <div class="bg-white rounded-xl p-3 shadow-sm flex justify-between items-center">
+            <div><p class="text-sm font-medium" x-text="e.title"></p><p class="text-xs text-textLight" x-text="e.event_date"></p></div>
+            <span class="text-xs px-2 py-1 rounded-full" :class="e.role==='发起的'?'bg-primary/10 text-primary':'bg-bg text-textLight'" x-text="e.role"></span>
+          </div>
+        </template>
+        <div x-show="myEvents.length===0" class="text-center text-textLight text-xs py-4">暂无事件</div>
+      </div>
+    </div>
+
+    <!-- 编辑弹窗 -->
+    <div x-show="showEditProfile" class="fixed inset-0 bg-black/40 z-50 flex items-end justify-center" @click.self="showEditProfile=false">
+      <div class="bg-white w-full max-w-md rounded-t-3xl p-6" @click.stop="">
+        <h3 class="text-lg font-semibold mb-4">编辑资料</h3>
+        <div class="space-y-3">
+          <input x-model="editNickname" placeholder="昵称" class="w-full px-4 py-2 rounded-xl border border-border text-sm">
+          <textarea x-model="editBio" placeholder="自我介绍" rows="3" class="w-full px-4 py-2 rounded-xl border border-border text-sm resize-none"></textarea>
+        </div>
+        <div class="flex gap-3 mt-4">
+          <button @click="showEditProfile=false" class="flex-1 py-2 rounded-full border border-border text-textLight">取消</button>
+          <button @click="api('/users/me',{method:'PUT',body:JSON.stringify({nickname:editNickname,bio:editBio})}).then(r=>{if(r.ok){showEditProfile=false;loadUser()}})" class="flex-1 bg-primary text-white py-2 rounded-full font-medium">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 发布事件弹窗 -->
+  <div x-show="showCreateEvent" class="fixed inset-0 bg-black/40 z-50 flex items-end justify-center" @click.self="showCreateEvent=false">
+    <div class="bg-white w-full max-w-md rounded-t-3xl p-6" @click.stop="">
+      <h3 class="text-lg font-semibold mb-4">发布搭子事件</h3>
+      <div class="space-y-3">
+        <input x-model="newEvent.title" placeholder="活动标题" class="w-full px-4 py-2 rounded-xl border border-border text-sm outline-none focus:border-primary">
+        <input x-model="newEvent.location" placeholder="地点" class="w-full px-4 py-2 rounded-xl border border-border text-sm outline-none focus:border-primary">
+        <input x-model="newEvent.event_date" type="datetime-local" class="w-full px-4 py-2 rounded-xl border border-border text-sm outline-none focus:border-primary"></div>
+        <select x-model="newEvent.event_duration" class="w-full px-4 py-2 rounded-xl border border-border text-sm outline-none bg-white"><option value="1小时">1小时</option><option value="2小时">2小时</option><option value="3小时">3小时</option><option value="半天">半天</option><option value="全天">全天</option></select>
+        <textarea x-model="newEvent.description" placeholder="活动描述..." rows="2" class="w-full px-4 py-2 rounded-xl border border-border text-sm outline-none focus:border-primary resize-none"></textarea>
+        <div><label class="text-xs text-textLight">招募人数</label><select x-model="newEvent.max_participants" class="w-full px-4 py-2 rounded-xl border border-border text-sm outline-none bg-white mt-1"><option value="2">2人</option><option value="3">3人</option><option value="4">4人</option><option value="5">5人</option><option value="10">10人</option><option value="20">20人</option></select></div>
+        <select x-model="newEvent.category" class="w-full px-4 py-2 rounded-xl border border-border text-sm outline-none bg-white">
+          <option value="">选择分类</option>
+          <template x-for="c in categories"><option :value="c" x-text="c"></option></template>
+        </select>
+      </div>
+      <div class="flex gap-3 mt-4">
+        <button @click="showCreateEvent=false" class="flex-1 py-2 rounded-full border border-border text-textLight">取消</button>
+        <button @click="createEvent()" class="flex-1 bg-primary text-white py-2 rounded-full font-medium">发布</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================================================ -->
+<!-- 底部导航栏 -->
+<!-- ============================================================ -->
+<div class="tab-bar bg-white border-t border-border z-40" x-show="currentView === 'main' && currentTab !== 'chatDetail'">
+  <div class="grid grid-cols-5 py-2">
+    <button @click="switchTab('events')" class="flex flex-col items-center text-xs gap-1" :class="currentTab==='events'?'text-primary':'text-textLight'">
+      <span class="text-lg">🔍</span>探趣
+    </button>
+    <button @click="switchTab('persons')" class="flex flex-col items-center text-xs gap-1" :class="currentTab==='persons'?'text-primary':'text-textLight'">
+      <span class="text-lg">🌸</span>觅友
+    </button>
+    <button @click="showCreateEvent=true" class="flex flex-col items-center text-xs gap-1">
+      <span class="w-10 h-10 bg-primary text-white rounded-full flex items-center justify-center text-lg shadow-md">+</span>
+    </button>
+    <button @click="switchTab('messages')" class="flex flex-col items-center text-xs gap-1" :class="currentTab==='messages'?'text-primary':'text-textLight'">
+      <span class="text-lg">💬</span>消息
+    </button>
+    <button @click="switchTab('me')" class="flex flex-col items-center text-xs gap-1" :class="currentTab==='me'?'text-primary':'text-textLight'">
+      <span class="text-lg">👩</span>我
+    </button>
+  </div>
+</div>
+
+</body>
+</html>
